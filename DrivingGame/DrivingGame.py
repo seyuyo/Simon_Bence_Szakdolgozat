@@ -58,7 +58,7 @@ FPS = 60
 
 # A szenzorok számát és elhelyezkedését beállíthatod az alábbi konstansokkal
 NUM_SENSORS = 5  # Szenzorok száma
-SENSOR_ANGLE_RANGE = 90  # A szenzorok által lefedett szög
+SENSOR_ANGLE_RANGE = 60  # A szenzorok által lefedett szög
 SENSOR_LENGTH = 40 # szenzor hossza
 
 
@@ -319,7 +319,7 @@ def prepare_data(X, y):
 # Neurális hálózat létrehozása
 def create_model(input_dim):
     model = Sequential([
-        Dense(64, activation='relu', input_shape=(input_dim,)),
+        Dense(5, activation='relu', input_shape=(input_dim,)),
         Dropout(0.2),
         Dense(64, activation='relu'),
         Dropout(0.2),
@@ -328,9 +328,9 @@ def create_model(input_dim):
     model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
     return model
 
-# Adatok betöltése és előkészítése
-X, y = load_data()
-X_train, X_test, y_train, y_test = prepare_data(X, y)
+# # Adatok betöltése és előkészítése
+# X, y = load_data()
+# X_train, X_test, y_train, y_test = prepare_data(X, y)
 #
 # # Neurális hálózat létrehozása
 # model = create_model(X_train.shape[1])
@@ -392,6 +392,83 @@ def collect_sensor_data(car):
 
     return sensor_data
 
+def should_rotate_left(sensor_data):
+    # Check for at least one yellow at the start followed by only reds
+    has_yellow = False
+    for i, color in enumerate(sensor_data):
+        if color == 'Y':
+            has_yellow = True
+        elif color == 'R' and has_yellow:
+            continue
+        else:
+            return False  # If we find a non-red after yellow or any other pattern, return False
+    return has_yellow  # Only return True if at least one yellow was found and followed by only reds
+
+
+
+
+def apply_control(car, sensor_data):
+    # Count each color detection
+    green_count = sensor_data.count('G')
+    yellow_count = sensor_data.count('Y')
+    red_count = sensor_data.count('R')
+
+    # Priority is to handle red detection to avoid forbidden areas
+    if red_count > 0:
+        # Evaluate where most of the red detections are located
+        left_red_count = sum(1 for i in sensor_data[:len(sensor_data) // 2] if i == 'R')
+        right_red_count = sum(1 for i in sensor_data[len(sensor_data) // 2:] if i == 'R')
+
+        if left_red_count > right_red_count:
+            print("More red on left; moving backward and rotating right.")
+            if should_rotate_left(sensor_data):
+                car.rotate(right=True)
+            car.move_forward()
+            car.rotate(left=True)
+        elif right_red_count > left_red_count and green_count == 0:
+            print("More red on right; moving backward and rotating left.")
+            if sensor_data[0] == 'Y' and sensor_data[-1] == 'R' or sensor_data[-1] == 'Y' and sensor_data[0] == 'R':
+                car.rotate(right=True)
+            car.move_forward()
+            car.rotate(left=True)
+        elif left_red_count == right_red_count:
+            # If red is equally distributed or centralized
+            print("Red is centralized or equally distributed; deciding action.")
+            if sensor_data[0] == 'Y' and sensor_data[1] == 'R' and sensor_data[-1] == 'R' and sensor_data[-2] == 'R' and sensor_data[2] == 'R':
+                car.rotate(right=True)
+                print("Rotate Right")
+            elif sensor_data[4] == 'Y' and sensor_data[3] == 'R' and sensor_data[0] == 'R' and sensor_data[1] == 'R' and sensor_data[2] == 'R':
+                car.rotate(left=True)
+                print("Rotate Left")
+            else:
+                # Default action if no better option is apparent
+                car.move_backward()
+                print("Default backward move")
+
+    # Handle yellow detection for cautious approach or turning
+    elif yellow_count > 0:
+        if sensor_data[0] == 'Y' and sensor_data[-1] == 'Y' and green_count > 0:
+            car.move_forward()
+
+        if sensor_data[0] == 'Y' or sensor_data[1] == 'Y':  # Assuming these are left-side sensors
+            if sensor_data[0] == 'Y' and sensor_data[-1] == 'R' or sensor_data[-1] == 'Y' and sensor_data[0] == 'R':
+                car.rotate(left=True)
+            car.rotate(left=True)
+            # print("asd")
+        elif sensor_data[-1] == 'Y' or sensor_data[-2] == 'Y':  # Right-side sensors
+            if sensor_data[0] == 'Y' and sensor_data[-1] == 'R' or sensor_data[-1] == 'Y' and sensor_data[0] == 'R':
+                car.rotate(left=True)
+            car.rotate(right=True)
+            # print("dsa")
+        elif sensor_data[2] == 'Y' or sensor_data[3] == 'Y':
+            car.move_forward()
+    # Move forward if all sensors detect green
+    elif green_count == len(sensor_data):
+        car.move_forward()
+
+    else:
+        car.slowing()  # Slow down if none of the above conditions are met
+
 
 
 """ A program fő ciklusa, amely a játékot vezérli. """
@@ -414,28 +491,27 @@ while True:
     # print("Sensor Data:")
     # print(sensor_data_array)
 
-    # StandardScaler objektum létrehozása és illesztése az adathalmazra
-    scaler = StandardScaler()
-    scaler.fit(X_train)  # X_train az illesztendő adathalmaz
+    # Use the simple decision-making function instead of model prediction
+    apply_control(player_car, sensor_data)
 
-    # Adatok átalakítása numerikus formátumba
-    numeric_sensor_data = [1 if data == 'G' else 2 if data == 'Y' else 3 for data in sensor_data]
 
-    # Használjuk a betanított modellt az előrejelzéshez
-    predicted_control = model.predict(np.array([numeric_sensor_data]))
-
-    # Kiválasztjuk a legvalószínűbb osztályt
-    predicted_class = np.argmax(predicted_control)
-
-    # Az előrejelzett vezérlést alkalmazzuk az autóra
-    if predicted_class == 1:
-        player_car.move_forward()
-    elif predicted_class == 2:
-        player_car.move_forward()
-        player_car.rotate(left=True)
-    elif predicted_class == 3:
-        player_car.move_forward()
-        player_car.rotate(right=True)
+    # # Szenzorok súlyozása
+    # weighted_sensor_data = [1 if data == 'G' else 2 if data == 'Y' else 3 if data == 'R' else 4 for data in sensor_data]
+    #
+    # # Használjuk a betanított modellt az előrejelzéshez
+    # predicted_control = model.predict(np.array([weighted_sensor_data]))
+    #
+    # # Kiválasztjuk a legvalószínűbb osztályt
+    # predicted_class = np.argmax(predicted_control)
+    #
+    # # Az előrejelzett vezérlést alkalmazzuk az autóra
+    # if predicted_class == 1:
+    #     player_car.move_forward()
+    # elif predicted_class == 2:
+    #     player_car.rotate(left=True)
+    # elif predicted_class == 3:
+    #     player_car.move_backward()
+    #     player_car.rotate(right=True)
 
 
     draw(WIN, images, player_car)
