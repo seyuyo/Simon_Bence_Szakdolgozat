@@ -1,44 +1,46 @@
 import numpy as np
 
 
-# Szenzorok értékelése egyszerű szótárral
-sensor_weights = {'G': 0, 'Y': 1, 'R': 2, 'B': 3, 'O': 4}
+# Szenzorértékek kódolása. Ugyanezt használja a tanítás (model.py) és a vezérlés is,
+# különben a háló mást kap futás közben, mint amin tanult.
+SENSOR_ENCODING = {'G': 0, 'Y': 1, 'R': 2, 'B': 3, 'O': 4}
+
+# Irány osztályok (a háló direction_output kimenetének indexei)
+FORWARD, LEFT, RIGHT, FORWARD_LEFT, FORWARD_RIGHT = range(5)
+DIRECTION_NAMES = ["előre", "balra", "jobbra", "előre + balra", "előre + jobbra"]
+
+
+def encode_sensors(sensor_data):
+    """ Szenzoradatok (pl. ['G', 'Y', ...]) átalakítása a háló bemenetévé, [0, 1] tartományba. """
+    return np.array([SENSOR_ENCODING[s] for s in sensor_data], dtype=np.float32) / (len(SENSOR_ENCODING) - 1)
+
+
+def apply_direction(car, direction):
+    if direction == FORWARD:
+        car.move_forward()
+    elif direction == LEFT:
+        car.rotate(left=True)
+        car.move()
+    elif direction == RIGHT:
+        car.rotate(right=True)
+        car.move()
+    elif direction == FORWARD_LEFT:
+        car.move_forward()
+        car.rotate(left=True)
+    elif direction == FORWARD_RIGHT:
+        car.move_forward()
+        car.rotate(right=True)
+
 
 def apply_advanced_model_control(car, model, sensor_data):
-    # Súlyozott szenzoradatok elkészítése
-    weighted_sensor_data = [sensor_weights.get(data, -1) for data in sensor_data]
-    if -1 in weighted_sensor_data:
+    if any(s not in SENSOR_ENCODING for s in sensor_data):
         print("Hiba: Ismeretlen szenzoradat.")
         return
 
-    try:
-        # Modell predikciók végrehajtása
-        predicted_outputs = model.predict(np.array([weighted_sensor_data]))
+    # model(...) közvetlen hívása képkockánként sokkal gyorsabb, mint a model.predict(...)
+    velocity, direction = model(encode_sensors(sensor_data)[np.newaxis, :], training=False)
+    predicted_velocity = float(velocity[0, 0])
+    predicted_direction = int(np.argmax(direction[0]))
 
-        predicted_velocity = float(predicted_outputs[0])
-        predicted_direction = np.argmax(predicted_outputs[1])
-
-        # Sebesség és irány beállítása
-        car.set_velocity(predicted_velocity)
-
-        # Utasítások hozzárendelése
-        direction_instructions = {
-            0: ("előre", car.move_forward),
-            1: ("balra", lambda: setattr(car, "angle", car.angle + 5)),
-            2: ("jobbra", lambda: setattr(car, "angle", car.angle - 5)),
-            3: ("előre + balra", lambda: (car.move_forward(), car.rotate(right=True))),
-            4: ("előre + jobbra", lambda: (car.move_forward(), car.rotate(left=True))),
-        }
-
-        # A megfelelő utasítás végrehajtása
-        direction_name, action = direction_instructions.get(predicted_direction, ("Unknown", None))
-        if action:
-            action()
-            print(direction_name)
-        else:
-            print("Hiba: Ismeretlen irányítás.")
-
-    except Exception as e:
-        print(f"Error: {e}")
-        car.slowing()
-        car.rotate(right=True)
+    car.set_velocity(min(predicted_velocity, car.get_max_velocity()))
+    apply_direction(car, predicted_direction)

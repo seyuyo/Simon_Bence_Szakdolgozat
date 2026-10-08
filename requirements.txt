@@ -1,0 +1,6 @@
+pygame>=2.6
+pygame_widgets>=1.1
+numpy>=1.26
+pandas>=2.0
+scikit-learn>=1.4
+tensorflow>=2.16

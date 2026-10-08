@@ -39,3 +39,24 @@ A szakdolgozat bemutatja a modell architektúráját, a tanulási módszertant, 
 alkalmazott technológiákat, valamint az eredményeket és az értékelést. További célja, hogy
 bemutassa, hogy az MI modell hogyan képes adaptálni és javítani a vezetési teljesítményét
 különböző körülmények között. 
+
+## Futtatás
+
+```bash
+pip install -r requirements.txt
+python DrivingGame/main.py model      # neurális háló vezet (alapértelmezett)
+python DrivingGame/main.py rule       # szabályalapú vezérlő (automated_car.py)
+python DrivingGame/main.py manual     # kézi vezetés: W/A/S/D vagy nyilak
+python DrivingGame/main.py qlearning  # Q-tanulás, kilépéskor menti a q_table.json-t
+```
+
+A modell újratanítása (az `automated_driving_data_full.csv` alapján):
+
+```bash
+cd DrivingGame && python model.py     # -> automated_trained_model_v2.keras
+```
+
+A tanítóadat csak a sebességet tartalmazza, ezért az irány címkéket a `model.py`
+a szabályalapú vezérlő (`automated_car.py`) döntéséből állítja elő.
+
+![A háló által vezetett autó útvonala több körön át](docs/model_trajectory.png)

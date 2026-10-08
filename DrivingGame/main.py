@@ -9,9 +9,17 @@ from pygame_widgets.slider import Slider
 import csv
 import obstacles
 import json
-import matplotlib.pyplot as plt
 import model_control
-import model
+import automated_car
+
+# A program a saját mappájából tölti be a képeket és adatfájlokat, bárhonnan is indítjuk
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
+
+# Vezérlési mód: "manual" (billentyűzet), "rule" (szabályalapú, automated_car.py),
+# "model" (SL neurális háló, model.py), "qlearning" (Q-tanulás)
+CONTROL_MODE = sys.argv[1] if len(sys.argv) > 1 else "model"
+if CONTROL_MODE not in ("manual", "rule", "model", "qlearning"):
+    sys.exit(f"Ismeretlen vezérlési mód: {CONTROL_MODE} (manual | rule | model | qlearning)")
 
 pygame.init()
 
@@ -211,7 +219,6 @@ class Car:
             # Az érzékelő kezdőpontja az autó orrában
             start_x = self.center[0] + (CAR_WIDTH / 2) * math.cos(math.radians(self.angle))
             start_y = self.center[1] + (CAR_WIDTH / 2) * math.sin(math.radians(self.angle))
-            self.center = (self.x + CAR_WIDTH / 2, self.y + CAR_HEIGHT / 2)
 
             # Érzékelő végpontjának koordinátái
             end_x = start_x + self.sensor_length * math.cos(math.radians(absolute_sensor_angle))
@@ -288,6 +295,12 @@ class Car:
 
         self.y -= vertical  # Y pozíció frissítése
         self.x -= horizontal  # X pozíció frissítése
+        self.update_center()
+
+    def update_center(self):
+        """ Középpont és befoglaló téglalap frissítése az aktuális pozíció alapján. """
+        self.center = (self.x + CAR_WIDTH / 2, self.y + CAR_HEIGHT / 2)
+        self.rect.topleft = (self.x, self.y)
 
 
     """ Az autó lassítását végző metódus amennyiben felengedjük a gázt vagy hátrafelé megyünk."""
@@ -343,12 +356,15 @@ sensor_values = {
     'O': 4   # Sár
 }
 
-# Állapot kinyerése a szenzor adatokból
+# Állapot kinyerése a szenzor adatokból: 5-ös számrendszerbeli szám, így a szenzorok
+# sorrendje is számít (az egyszerű összeg pl. a bal és jobb oldali fűt nem különböztetné meg)
 def get_state_from_sensors(sensor_data):
     state = 0
     for data in sensor_data:
-        state += sensor_values[data]
+        state = state * len(sensor_values) + sensor_values[data]
     return state
+
+STATE_SIZE = len(sensor_values) ** NUM_SENSORS
 
 # Q-tábla mentése és betöltése fájlból
 def save_q_table(agent, filename="q_table.json"):
@@ -376,14 +392,7 @@ def compute_reward(car):
     return 100
 
 # Játék ciklus frissítése
-agent = QLearningAgent(action_size=5, state_size=300)
-
-# Jutalmak betöltése fájlból
-with open("rewards.json", "r") as f:
-    rewards_per_episode = json.load(f)
-
-# Csak az összegzett jutalmakra van szükségünk
-rewards = [reward[2] for reward in rewards_per_episode]
+agent = QLearningAgent(action_size=5, state_size=STATE_SIZE)
 
 # Eredmények plotolása
 # plt.plot(rewards)
@@ -404,25 +413,17 @@ rewards = [reward[2] for reward in rewards_per_episode]
 # plt.title('Q-learning Agent Performance (Moving Average)')
 # plt.show()
 
-# Q-tábla betöltése
-load_q_table(agent)
+# Q-tábla betöltése (a régi, 300 állapotos tábla nem kompatibilis az új állapotkódolással)
+if os.path.exists("q_table.json"):
+    load_q_table(agent)
+    if agent.q_table.shape != (STATE_SIZE, agent.action_size):
+        print("A q_table.json régi formátumú, új Q-tábla indul.")
+        agent.q_table = np.zeros((STATE_SIZE, agent.action_size))
 
-# akció végrehajtása az autón
+# akció végrehajtása az autón: ugyanaz az 5 akció, mint a neurális hálónál
+# (0 - előre, 1 - balra, 2 - jobbra, 3 - előre + balra, 4 - előre + jobbra)
 def apply_action_to_car(car, action):
-    # Itt a cselekvések lehetnek például:
-    # 0 - előre, 1 - jobbra, 2 - balra, 3 - Fordul jobbra, 4 - Fordul balra
-    if action == 0:
-        car.move_forward()
-    elif action == 1:
-        car.rotate(right=True)
-    elif action == 2:
-        car.rotate(left=True)
-    elif action == 4:
-        car.move_forward()
-        car.rotate(right=True)
-    elif action == 5:
-        car.move_forward()
-        car.rotate(left=True)
+    model_control.apply_direction(car, action)
 
 # Játék ciklus frissítése
 def draw_elements(win, images, player_car, obstacles):
@@ -433,7 +434,6 @@ def draw_elements(win, images, player_car, obstacles):
         obstacle.draw(win)
 
     player_car.draw_car(win, obstacles)
-    player_car.draw_sensors(win, obstacles)
 
 def save_sensor_data(sensor_data, filename):
     with open(filename, 'a', newline='') as csvfile:
@@ -545,11 +545,17 @@ def collect_sensor_data(car):
 
     return sensor_data
 
-# Adatgyűjtésre szolgáló lista inicializálása
-data = []
-
-# jutaalmak listája
+# jutalmak listája
 rewards_per_episode = []
+
+# SL modell betöltése csak akkor, ha az vezérli az autót (a TensorFlow betöltése lassú)
+trained_model = None
+if CONTROL_MODE == "model":
+    import model
+    trained_model = model.load_trained_model()
+
+clock = pygame.time.Clock()  # egyetlen óra, különben a tick() nem korlátozza az FPS-t
+FONT = pygame.font.SysFont("comicsans", 20)  # betűtípus egyszer betöltve, nem minden képkockában
 
 """ A program fő ciklusa, amely a játékot vezérli. """
 while True:
@@ -557,11 +563,11 @@ while True:
     for event in events:
         if event.type == pygame.QUIT:
             # Kilépés előtt mentjük az állapotot
-            # save_q_table(agent)
-            # print("Az utolsó Q-tábla elmentve.")
-            # # A játék végeztével mentjük a jutalmakat
-            # with open("rewards.json", "w") as f:
-            #     json.dump(rewards_per_episode, f)
+            if CONTROL_MODE == "qlearning":
+                save_q_table(agent)
+                print("Az utolsó Q-tábla elmentve.")
+                with open("rewards.json", "w") as f:
+                    json.dump(rewards_per_episode, f)
             pygame.quit()
             sys.exit()
 
@@ -595,43 +601,37 @@ while True:
 
     # Adatgyűjtés a szenzoroktól
     sensor_data = collect_sensor_data(player_car)
-    # state = get_state_from_sensors(sensor_data)
-    #
-    # # Agent cselekvés döntése
-    # action = agent.decide_action(state)
-    # apply_action_to_car(player_car, action)
-    #
-    # # Új állapot és jutalom számítása
-    # new_sensor_data = collect_sensor_data(player_car)
-    # new_state = get_state_from_sensors(new_sensor_data)
-    # reward = compute_reward(player_car)
-    #
-    # # Q-tábla frissítése
-    # agent.update_policy(state, action, reward, new_state)
-    #
-    # # Rögzítjük a jutalmat
-    # if len(rewards_per_episode) == 0 or rewards_per_episode[-1][1] > pygame.time.get_ticks():
-    #     rewards_per_episode.append((len(rewards_per_episode), pygame.time.get_ticks() + 1000, 0))
-    # rewards_per_episode[-1] = (rewards_per_episode[-1][0], rewards_per_episode[-1][1], rewards_per_episode[-1][2] + reward)
 
+    if CONTROL_MODE == "qlearning":
+        state = get_state_from_sensors(sensor_data)
 
+        # Agent cselekvés döntése
+        action = agent.decide_action(state)
+        apply_action_to_car(player_car, action)
 
-    # Debug információk
-    # print(f"State: {state}, Action: {action}, Reward: {reward}, Exploration: {agent.exploration_rate}")
-    # Például 1000 ciklusonként mentjük a Q-táblát
-    # if pygame.time.get_ticks() % 100000 == 0:
-    #     save_q_table(agent)
-    #     print("Q-tábla mentve.")
+        # Új állapot és jutalom számítása
+        new_sensor_data = collect_sensor_data(player_car)
+        new_state = get_state_from_sensors(new_sensor_data)
+        reward = compute_reward(player_car)
 
-    # Az autó vezérlése a szenzorok alapján (automatikus vezérlés)
-    # ac.apply_control(player_car, sensor_data)
+        # Q-tábla frissítése
+        agent.update_policy(state, action, reward, new_state)
 
-    # Az adatokat folyamatosan hozzáfűzzük a CSV fájlhoz (SL modell)
-    # save_sensor_data(sensor_data, 'automated_driving_data_full.csv')
-    # save_drive_data(sensor_data, round(player_car.get_velocity(), 2))
+        # Rögzítjük a jutalmat (másodpercenként új epizód)
+        if len(rewards_per_episode) == 0 or rewards_per_episode[-1][1] < pygame.time.get_ticks():
+            rewards_per_episode.append((len(rewards_per_episode), pygame.time.get_ticks() + 1000, 0))
+        rewards_per_episode[-1] = (rewards_per_episode[-1][0], rewards_per_episode[-1][1], rewards_per_episode[-1][2] + reward)
 
-    # Az autó mozgatása az SL modell vezérlése alapján
-    model_control.apply_advanced_model_control(player_car, model.load_model, sensor_data)
+    elif CONTROL_MODE == "rule":
+        # Az autó vezérlése a szenzorok alapján (automatikus vezérlés)
+        automated_car.apply_control(player_car, sensor_data)
+
+        # Az adatokat folyamatosan hozzáfűzhetjük a CSV fájlhoz (SL modell tanítóadata)
+        # save_drive_data(sensor_data, round(player_car.get_velocity(), 2))
+
+    elif CONTROL_MODE == "model":
+        # Az autó mozgatása az SL modell vezérlése alapján
+        model_control.apply_advanced_model_control(player_car, trained_model, sensor_data)
 
     draw_elements(WIN, images, player_car, obstacles_list)
     WIN.blit(control_panel, (WIDTH - 250, 0))
@@ -650,7 +650,9 @@ while True:
     if keys[pygame.K_s] or keys[pygame.K_DOWN]:
         moved = True
         player_car.move_backward()
-    if not moved:
+    # Gurulás/lassulás, ha nincs gáz. A háló maga állítja a sebességet és mozgatja az autót,
+    # ott ez egy második mozgatás lenne képkockánként.
+    if not moved and CONTROL_MODE != "model":
         player_car.slowing()
 
     # Ha a játékos terepen marad akkor csúszkával állítható a maximális sebesség és a forgási sebesség
@@ -686,39 +688,40 @@ while True:
         player_car.y = 0
     elif player_car.y > HEIGHT - CAR_HEIGHT:
         player_car.y = HEIGHT - CAR_HEIGHT
+    player_car.update_center()
 
     # Adatokat megjelenítő felület
     control_panel.blit(control_surface, (0, 0))
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Sebesség:{round(player_car.get_velocity(), 2)} p/s",
+        FONT.render(f"Sebesség:{round(player_car.get_velocity(), 2)} p/s",
                                                     True, (0, 0, 0)),(25, 5))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Forgási sebesség:{round(player_car.get_rotation_velocity(), 2)}",
+        FONT.render(f"Forgási sebesség:{round(player_car.get_rotation_velocity(), 2)}",
                                                     True, (0, 0, 0)), (20, 50))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Maximális sebesség:{round(player_car.get_max_velocity(), 2)}",
+        FONT.render(f"Maximális sebesség:{round(player_car.get_max_velocity(), 2)}",
                                                     True, (0, 0, 0)), (20, 130))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Gyorsulás:{round(player_car.get_acceleration(), 2)}",
+        FONT.render(f"Gyorsulás:{round(player_car.get_acceleration(), 2)}",
                                                     True, (0, 0, 0)), (52, 210))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Fék:{round(player_car.get_acceleration(), 2)}",
+        FONT.render(f"Fék:{round(player_car.get_acceleration(), 2)}",
                                                     True, (0, 0, 0)), (85, 270))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Akadályok kiválasztása:",
+        FONT.render(f"Akadályok kiválasztása:",
                                                     True, (0, 0, 0)), (20, 330))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Gyalogos",
+        FONT.render(f"Gyalogos",
                                                     True, (0, 0, 0)), (20, 370))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render(f"Sár",
+        FONT.render(f"Sár",
                                                     True, (0, 0, 0)), (160, 370))
     #gyalogos hozzáadása
     control_panel.blit(PEDESTRIAN, (40, 420))
@@ -731,9 +734,9 @@ while True:
                                                 CLEAR_BUTTON_WIDTH + 30, CLEAR_BUTTON_HEIGHT))
 
     control_panel.blit(
-        pygame.font.SysFont("comicsans", 20).render("Összes akadály törlése", True, (255, 255, 255)),
+        FONT.render("Összes akadály törlése", True, (255, 255, 255)),
         (CLEAR_BUTTON_X - (WIDTH - 250), CLEAR_BUTTON_Y + 15))
 
     pygame_widgets.update(events)
     pygame.display.update()
-    pygame.time.Clock().tick(FPS)
+    clock.tick(FPS)
