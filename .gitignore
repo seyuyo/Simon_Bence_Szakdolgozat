@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+DrivingGame/distance_driving_data.npz

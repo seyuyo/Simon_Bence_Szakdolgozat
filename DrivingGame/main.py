@@ -12,7 +12,8 @@ from pygame_widgets.slider import Slider
 from assets import (WIDTH, HEIGHT, PANEL_WIDTH, FPS, GRASS, FIELD_ONLY, TRACKSIDE, FINISH, FINISH_POSITION,
                     PEDESTRIAN, MUD)
 from controllers import CONTROL_MODES, create_controller
-from sensors import SENSOR_COLORS, sensor_segments, surface_at
+from sensors import (SENSOR_COLORS, SENSOR_RANGE, DISTANCE_ANGLES, sensor_direction, sensor_segments, surface_at,
+                     read_distances)
 from simulation import Simulation
 
 PANEL_X = WIDTH - PANEL_WIDTH
@@ -33,7 +34,20 @@ def draw_sensors(win, car, obstacles):
         pygame.draw.circle(win, color, (int(end[0]), int(end[1])), 5)
 
 
-def draw_world(win, sim):
+def draw_distance_sensors(win, car, obstacles):
+    """ Távolságmérő sugarak: a sugár a mért távolságig tart, a vége a talált felület színe. """
+    distances, surfaces = read_distances(car, obstacles)
+    start = car.nose()
+    for angle, distance, surface in zip(DISTANCE_ANGLES, distances, surfaces):
+        dx, dy = sensor_direction(car, angle)
+        length = abs(distance) * SENSOR_RANGE
+        end = (start[0] + dx * length, start[1] + dy * length)
+        pygame.draw.line(win, (220, 220, 220), start, end, 1)
+        if surface != 'G':
+            pygame.draw.circle(win, SENSOR_COLORS[surface], (int(end[0]), int(end[1])), 4)
+
+
+def draw_world(win, sim, distance_sensors=False):
     win.blit(GRASS, (0, 0))
     win.blit(FIELD_ONLY, (0, 0))
     win.blit(TRACKSIDE, (0, 0))
@@ -41,7 +55,10 @@ def draw_world(win, sim):
     for obstacle in sim.obstacles:
         obstacle.draw(win)
     sim.car.draw(win)
-    draw_sensors(win, sim.car, sim.obstacles)
+    if distance_sensors:
+        draw_distance_sensors(win, sim.car, sim.obstacles)
+    else:
+        draw_sensors(win, sim.car, sim.obstacles)
 
 
 def draw_panel(panel, font, sim, mode):
@@ -99,7 +116,7 @@ def main(mode):
     clock = pygame.time.Clock()  # egyetlen óra, különben a tick() nem korlátozza az FPS-t
 
     sim = Simulation()
-    controller = create_controller(mode)
+    controller = create_controller(mode, sim)
     panel = pygame.Surface((PANEL_WIDTH, HEIGHT))
 
     # csúszkák létrehozása: a pályán érvényes beállítások
@@ -128,7 +145,7 @@ def main(mode):
 
         sim.step(controller)
 
-        draw_world(win, sim)
+        draw_world(win, sim, distance_sensors=mode in ("model", "expert"))
         draw_panel(panel, font, sim, mode)
         win.blit(panel, (PANEL_X, 0))
 

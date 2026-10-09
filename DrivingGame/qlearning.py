@@ -194,11 +194,12 @@ def run_episode(sim, agent, path, max_steps, explore=True, learn=True):
     return total_reward, total_progress
 
 
-def train(episodes=2000, max_steps=1500, pedestrians=0, seed=0):
+def train(episodes=3000, max_steps=1500, max_pedestrians=2, max_muds=1, seed=0):
+    """ Tanítás; minden epizódban 0..max_pedestrians gyalogos és 0..max_muds sárfolt véletlen helyen. """
     import random
-    from simulation import Simulation
+    from simulation import Simulation, place_random_obstacles
 
-    random.seed(seed)
+    rng = random.Random(seed)
     path = ReferencePath.load_or_record()
     sim = Simulation()
     agent = QLearningAgent()
@@ -207,8 +208,8 @@ def train(episodes=2000, max_steps=1500, pedestrians=0, seed=0):
 
     for episode in range(episodes):
         sim.clear_obstacles()
-        for _ in range(pedestrians):
-            sim.add_pedestrian()
+        sim.reset()
+        place_random_obstacles(sim, rng, rng.randint(0, max_pedestrians), rng.randint(0, max_muds))
         total_reward, total_progress = run_episode(sim, agent, path, max_steps)
         agent.end_episode()
         rewards_per_episode.append((episode, round(total_reward, 1), int(total_progress)))
@@ -218,7 +219,7 @@ def train(episodes=2000, max_steps=1500, pedestrians=0, seed=0):
                   f"átlagos út {np.mean([r[2] for r in recent]):.0f}/{len(path.points)} pont, "
                   f"epszilon {agent.exploration_rate:.3f}")
 
-    agent.save()
+    agent.save(Q_TABLE_FILE)
     with open(REWARDS_FILE, "w") as f:
         json.dump(rewards_per_episode, f)
     print(f"Q-tábla elmentve: {Q_TABLE_FILE}")
@@ -226,4 +227,4 @@ def train(episodes=2000, max_steps=1500, pedestrians=0, seed=0):
 
 
 if __name__ == "__main__":
-    train(episodes=int(sys.argv[1]) if len(sys.argv) > 1 else 2000)
+    train(episodes=int(sys.argv[1]) if len(sys.argv) > 1 else 3000)

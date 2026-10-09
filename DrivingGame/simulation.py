@@ -14,6 +14,7 @@ from sensors import read_sensors
 
 # Terep hatása: fűn és sárban az autó lassabb és nehezebben fordul
 GRASS_LIMITS = {"max_vel": 2, "rotation_vel": 2, "acceleration": 0.05}
+PEDESTRIAN_HIT_COOLDOWN = 60  # képkocka (1 mp): ezen belüli újabb érintés ugyanannak az elütésnek számít
 MUD_LIMITS = {"max_vel": 1.5, "rotation_vel": 3, "acceleration": 0.05}
 
 
@@ -30,7 +31,7 @@ class Simulation:
         self.frame = 0
         self.pedestrian_hits = 0  # hány gyalogost ütött el az autó
         self.offtrack_frames = 0  # hány képkockán át volt az autó a pályán kívül
-        self._touching = set()
+        self._last_touch = {}  # gyalogos -> az utolsó érintés képkockája
 
     # --- akadályok ---------------------------------------------------------
 
@@ -49,7 +50,7 @@ class Simulation:
 
     def clear_obstacles(self):
         self.obstacles.clear()
-        self._touching.clear()
+        self._last_touch.clear()
 
     def touched_obstacles(self):
         """ Azok az akadályok, amelyekkel az (elforgatott) autó éppen érintkezik. """
@@ -98,10 +99,13 @@ class Simulation:
 
         touched = self.touched_obstacles()
         for obstacle in touched:
-            # egy gyalogossal való érintkezés csak egyszer számít, amíg az autó rajta van
-            if obstacle.image is PEDESTRIAN and id(obstacle) not in self._touching:
+            if obstacle.image is not PEDESTRIAN:
+                continue
+            # egy elhaladás alatti többszöri érintés egy elütésnek számít
+            last = self._last_touch.get(id(obstacle))
+            if last is None or self.frame - last > PEDESTRIAN_HIT_COOLDOWN:
                 self.pedestrian_hits += 1
-        self._touching = {id(o) for o in touched}
+            self._last_touch[id(obstacle)] = self.frame
 
         self.apply_terrain(touched)
         self.keep_inside_window()
@@ -121,6 +125,18 @@ def random_position_within_mask(mask, image_width, image_height, rng=random):
                   (x + image_width - 1, y + image_height - 1), (x + image_width // 2, y + image_height // 2)]
         if all(mask.get_at(p) != 0 for p in points):
             return x, y
+
+
+def place_random_obstacles(sim, rng, pedestrians, muds):
+    """ Véletlen helyű gyalogosok és sárfoltok a pályán, de nem a rajtnál, ahol az autó áll. """
+    start = sim.car.center
+    for image, count in ((PEDESTRIAN, pedestrians), (MUD, muds)):
+        for _ in range(count):
+            while True:
+                position = random_position_within_mask(FIELD_ONLY_MASK, image.get_width(), image.get_height(), rng)
+                if not (abs(position[0] - start[0]) < 60 and abs(position[1] - start[1]) < 120):
+                    break
+            sim.add_obstacle(image, position)
 
 
 def lap_frame(positions, start, leave_distance=300, return_distance=40):

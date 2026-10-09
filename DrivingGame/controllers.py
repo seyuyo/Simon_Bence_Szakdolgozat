@@ -7,7 +7,7 @@ import pygame
 import automated_car
 import model_control
 
-CONTROL_MODES = ("model", "rule", "manual", "qlearning")
+CONTROL_MODES = ("model", "model_v2", "expert", "rule", "manual", "qlearning")
 
 
 def keyboard_control(car, keys):
@@ -47,13 +47,20 @@ class ModelController:
         model_control.apply_advanced_model_control(car, self.model, sensor_data)
 
 
-def create_controller(mode):
+def create_controller(mode, sim):
+    """ Vezérlő a megadott módhoz; a távolságot mérő vezérlők a szimuláció akadályait is látják. """
     if mode == "manual":
         return manual_controller
     if mode == "rule":
         return rule_controller
+    if mode == "expert":
+        import expert
+        return expert.ExpertController(sim.obstacles)
     if mode == "model":
-        import model  # a TensorFlow betöltése lassú, csak akkor kell, ha a háló vezet
+        import distance_model  # a TensorFlow betöltése lassú, csak akkor kell, ha a háló vezet
+        return distance_model.DistanceModelController(distance_model.load_trained_model(), sim.obstacles)
+    if mode == "model_v2":
+        import model
         return ModelController(model.load_trained_model())
     if mode == "qlearning":
         import qlearning

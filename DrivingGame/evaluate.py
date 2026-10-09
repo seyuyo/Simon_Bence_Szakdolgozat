@@ -16,7 +16,7 @@ OBSTACLE_POINTS = [(185, 112), (567, 227), (794, 175), (603, 590), (364, 653), (
 
 
 def run_scenario(controller, obstacle=None, point=None, frames=1000, sim=None):
-    sim = sim or Simulation()
+    sim = sim if sim is not None else Simulation()
     sim.clear_obstacles()
     sim.reset()
     if obstacle is not None:
@@ -33,12 +33,39 @@ def run_scenario(controller, obstacle=None, point=None, frames=1000, sim=None):
             "offtrack": sim.offtrack_frames, "positions": positions}
 
 
-def evaluate(controller, frames=1000):
-    results = {"empty": run_scenario(controller, frames=frames)}
+def evaluate(controller, frames=1000, sim=None):
+    results = {"empty": run_scenario(controller, frames=frames, sim=sim)}
     for kind in ("ped", "mud"):
         for point in OBSTACLE_POINTS:
-            results[(kind, point)] = run_scenario(controller, kind, point, frames)
+            results[(kind, point)] = run_scenario(controller, kind, point, frames, sim)
     return results
+
+
+def random_scenarios(controller, episodes=30, frames=1500, pedestrians=3, muds=2, seed=1, sim=None):
+    """ Véletlenszerűen elhelyezett akadályok (rögzített seed, így minden vezérlő ugyanazt kapja). """
+    import random
+    from simulation import place_random_obstacles
+
+    rng = random.Random(seed)
+    sim = sim if sim is not None else Simulation()
+    results = []
+    for _ in range(episodes):
+        sim.clear_obstacles()
+        sim.reset()
+        start = sim.car.center
+        place_random_obstacles(sim, rng, pedestrians, muds)
+        positions = []
+        for _ in range(frames):
+            sim.step(controller)
+            positions.append(sim.car.center)
+        results.append({"lap": lap_frame(positions, start), "hits": sim.pedestrian_hits,
+                        "offtrack": sim.offtrack_frames})
+    return {
+        "véletlen: elütött gyalogos / futás": round(sum(r["hits"] for r in results) / episodes, 2),
+        "véletlen: futás elütés nélkül": f"{sum(r['hits'] == 0 for r in results)}/{episodes}",
+        "véletlen: kör teljesítve": f"{sum(r['lap'] is not None for r in results)}/{episodes}",
+        "véletlen: pályán kívül (össz.)": sum(r["offtrack"] for r in results),
+    }
 
 
 def summary(results):
@@ -60,5 +87,8 @@ if __name__ == "__main__":
     print_ = builtins.print
     builtins.print = lambda *args, **kwargs: None  # a vezérlők kiírásai nélkül
     for mode in sys.argv[1:] or ["rule", "model"]:
-        result = summary(evaluate(controllers.create_controller(mode)))
+        sim = Simulation()
+        controller = controllers.create_controller(mode, sim)
+        result = summary(evaluate(controller, sim=sim))
+        result.update(random_scenarios(controller, sim=sim))
         print_(mode, result)

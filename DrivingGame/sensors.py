@@ -5,9 +5,10 @@ Minden szenzor egy, az autó orrából induló sugár. Két dolgot mér:
 - read_sensors: milyen felület van a sugár végén (SENSOR_LENGTH távolságban),
   ezt használja a szabályalapú vezérlő és az első neurális háló;
 - read_distances: milyen messze van a sugár mentén az első nem-aszfalt pont
-  (pálya széle, fű, akadály), legfeljebb SENSOR_RANGE távolságig.
+  (pálya széle, fű, akadály), legfeljebb SENSOR_RANGE távolságig. Ehhez sűrűbb, szélesebb
+  legyezőt használunk (DISTANCE_ANGLES), hogy a kis gyalogos se essen két sugár közé.
 
-A szenzorok sorrendje: 0. jobbra előre (-45 fok) ... 5. balra előre (+45 fok).
+A szenzorok sorrendje mindkét esetben jobbról balra halad (0. = jobbra előre).
 """
 import math
 
@@ -18,11 +19,15 @@ NUM_SENSORS = 6  # Szenzorok száma
 SENSOR_ANGLE_RANGE = 90  # A szenzorok által lefedett szög
 SENSOR_LENGTH = 40  # szenzor hossza (felület érzékelés)
 SENSOR_RANGE = 160  # távolságmérés legnagyobb hatótávja
+NUM_DISTANCE_SENSORS = 13  # távolságmérő sugarak száma
+DISTANCE_ANGLE_RANGE = 180  # a távolságmérő sugarak által lefedett szög (oldalra is lát)
 DISTANCE_STEP = 4  # távolságmérés lépésköze pixelben
 
 # szenzorok szöge az autó haladási irányához képest (fokban, pozitív = balra)
 SENSOR_ANGLES = [-SENSOR_ANGLE_RANGE / 2 + i * SENSOR_ANGLE_RANGE / (NUM_SENSORS - 1)
                  for i in range(NUM_SENSORS)]
+DISTANCE_ANGLES = [-DISTANCE_ANGLE_RANGE / 2 + i * DISTANCE_ANGLE_RANGE / (NUM_DISTANCE_SENSORS - 1)
+                   for i in range(NUM_DISTANCE_SENSORS)]
 
 # Felületek jelölése és megjelenítési színe
 SENSOR_COLORS = {
@@ -59,11 +64,11 @@ def sensor_direction(car, sensor_angle):
     return -math.sin(radians), -math.cos(radians)
 
 
-def sensor_segments(car, length=SENSOR_LENGTH):
+def sensor_segments(car, length=SENSOR_LENGTH, angles=SENSOR_ANGLES):
     """ A szenzorsugarak kezdő- és végpontjai (rajzoláshoz és méréshez). """
     start_x, start_y = car.nose()
     segments = []
-    for sensor_angle in SENSOR_ANGLES:
+    for sensor_angle in angles:
         dx, dy = sensor_direction(car, sensor_angle)
         segments.append(((start_x, start_y), (start_x + dx * length, start_y + dy * length)))
     return segments
@@ -78,13 +83,28 @@ def read_distances(car, obstacles):
     """
     Távolság az első nem-aszfalt pontig minden szenzor mentén, [0, 1] tartományba skálázva
     (1 = SENSOR_RANGE távolságon belül csak pálya van), és hogy mi van ott.
+
+    Ha a sugár eleve nem aszfalton indul (az autó orra a pályán kívül vagy sárban van), akkor
+    negatív érték: -(távolság a legközelebbi aszfaltig), illetve -1, ha a hatótávon belül nincs aszfalt.
+    Így a pályáról letért autó is tudja, merre van vissza az út.
     """
     start_x, start_y = car.nose()
     distances, surfaces = [], []
-    for sensor_angle in SENSOR_ANGLES:
+    for sensor_angle in DISTANCE_ANGLES:
         dx, dy = sensor_direction(car, sensor_angle)
+        start_surface = surface_at((start_x, start_y), obstacles)
+        if start_surface != 'G':
+            distance = -SENSOR_RANGE
+            for step in range(DISTANCE_STEP, SENSOR_RANGE + 1, DISTANCE_STEP):
+                if surface_at((start_x + dx * step, start_y + dy * step), obstacles) == 'G':
+                    distance = -step
+                    break
+            distances.append(distance / SENSOR_RANGE)
+            surfaces.append(start_surface)
+            continue
+
         distance, surface = SENSOR_RANGE, 'G'
-        for step in range(0, SENSOR_RANGE + 1, DISTANCE_STEP):
+        for step in range(DISTANCE_STEP, SENSOR_RANGE + 1, DISTANCE_STEP):
             found = surface_at((start_x + dx * step, start_y + dy * step), obstacles)
             if found != 'G':
                 distance, surface = step, found
