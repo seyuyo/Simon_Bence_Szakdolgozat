@@ -12,7 +12,7 @@ A szenzorok sorrendje mindkét esetben jobbról balra halad (0. = jobbra előre)
 """
 import math
 
-from assets import PEDESTRIAN, MUD, FIELD_ONLY_MASK, TRACKSIDE_MASK, GRASS_MASK
+from assets import PEDESTRIAN, MUD, FIELD_ONLY_MASK, TRACKSIDE_MASK
 
 # A szenzorok számát és elhelyezkedését beállíthatod az alábbi konstansokkal
 NUM_SENSORS = 6  # Szenzorok száma

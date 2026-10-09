@@ -44,19 +44,53 @@ különböző körülmények között.
 
 ```bash
 pip install -r requirements.txt
-python DrivingGame/main.py model      # neurális háló vezet (alapértelmezett)
-python DrivingGame/main.py rule       # szabályalapú vezérlő (automated_car.py)
+python DrivingGame/main.py model      # távolságmérő szenzoros neurális háló (alapértelmezett)
+python DrivingGame/main.py expert     # távolságmérő szenzoros szabályalapú vezérlő (a háló tanára)
+python DrivingGame/main.py model_v2   # az eredeti, színérzékelős neurális háló
+python DrivingGame/main.py rule       # az eredeti szabályalapú vezérlő (automated_car.py)
+python DrivingGame/main.py qlearning  # Q-tanulással betanított vezérlő
 python DrivingGame/main.py manual     # kézi vezetés: W/A/S/D vagy nyilak
-python DrivingGame/main.py qlearning  # Q-tanulás, kilépéskor menti a q_table.json-t
 ```
 
-A modell újratanítása (az `automated_driving_data_full.csv` alapján):
+A jobb oldali panelen gyalogos és sár tehető a pályára (egérrel áthelyezhetők), a panel
+számolja az elütött gyalogosokat. A sár lassítja az autót.
+
+### Felépítés (`DrivingGame/`)
+
+| Fájl | Tartalom |
+|---|---|
+| `main.py` | megjelenítés, vezérlőpanel |
+| `simulation.py` | a szimuláció ablak nélkül: autó, akadályok, terep, ütközések |
+| `car.py`, `sensors.py`, `assets.py` | autó, szenzorok (színérzékelő és távolságmérő), képek |
+| `controllers.py` | vezérlési módok |
+| `automated_car.py`, `model.py`, `model_control.py` | az eredeti szabályalapú vezérlő és színérzékelős háló |
+| `expert.py`, `distance_model.py` | távolságmérő szenzoros vezérlő és az azt utánzó háló |
+| `qlearning.py` | Q-tanulás |
+| `evaluate.py` | vezérlők összehasonlítása rögzített és véletlen akadályos pályákon |
+
+### Tanítás és kiértékelés (ablak nélkül)
 
 ```bash
-cd DrivingGame && python model.py     # -> automated_trained_model_v2.keras
+cd DrivingGame
+python distance_model.py   # adatgyűjtés a szakértővel + DAgger, -> distance_model.keras (~10 perc)
+python qlearning.py 3000   # Q-tanulás 3000 epizódon, -> q_table_v2.npy (~10 perc)
+python model.py            # az eredeti színérzékelős háló (CSV adatokból), -> automated_trained_model_v2.keras
+python evaluate.py model expert qlearning model_v2 rule
 ```
 
-A tanítóadat csak a sebességet tartalmazza, ezért az irány címkéket a `model.py`
-a szabályalapú vezérlő (`automated_car.py`) döntéséből állítja elő.
+### Eredmények (`evaluate.py`)
 
-![A háló által vezetett autó útvonala több körön át](docs/model_trajectory.png)
+30 futás, mindegyikben 3 gyalogos és 2 sárfolt véletlen helyen, 1500 képkocka (kb. 25 mp):
+
+| Vezérlő | Elütött gyalogos / futás | Futás elütés nélkül | Kör teljesítve | Kör üres pályán (képkocka) |
+|---|---|---|---|---|
+| `model` (távolságmérő háló) | 0,73 | 13/30 | 30/30 | 780 |
+| `expert` (a háló tanára) | 0,67 | 14/30 | 25/30 | 780 |
+| `qlearning` | 0,90 | 18/30 | 25/30 | 791 |
+| `model_v2` (színérzékelős háló) | 4,27 | 0/30 | 30/30 | 694 |
+| `rule` (eredeti szabályalapú) | 5,53 | 1/30 | 26/30 | 507 |
+
+A távolságmérő szenzorok 160 px-ig látnak (a színérzékelők csak 40 px-ig), így az autó időben
+lassít és kikerüli a gyalogost; cserébe óvatosabb, lassabb kört megy.
+
+![A távolságmérő háló útvonala gyalogosok és sár között](docs/model_trajectory.png)
